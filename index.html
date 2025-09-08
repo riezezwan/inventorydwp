@@ -1,0 +1,507 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Inventory App (Single‑File)</title>
+    <!-- Tailwind Play CDN -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <!-- React 18 UMD -->
+    <script crossorigin src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
+    <script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
+    <!-- Babel Standalone for in-browser JSX -->
+    <script src="https://unpkg.com/@babel/standalone@7.26.2/babel.min.js"></script>
+    <!-- html2canvas + jsPDF for PDF export -->
+    <script src="https://cdn.jsdelivr.net/npm/html2canvas@1.4.1/dist/html2canvas.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/jspdf@2.5.1/dist/jspdf.umd.min.js"></script>
+    <style>
+      @media print {
+        body * { visibility: hidden; }
+        .printable-area, .printable-area * { visibility: visible; }
+        .printable-area { position: absolute; left: 0; top: 0; width: 100%; }
+        .no-print { display: none !important; }
+      }
+    </style>
+  </head>
+  <body class="bg-slate-100 min-h-screen text-slate-800">
+    <div id="root"></div>
+
+    <script type="text/babel">
+      const { useEffect, useMemo, useRef, useState } = React;
+      const { createRoot } = ReactDOM;
+      const { jsPDF } = window.jspdf;
+
+      // --- Icons ---
+      const PlusIcon = () => (
+        <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5 mr-1" viewBox="0 0 20 20" fill="currentColor">
+          <path fillRule="evenodd" d="M10 3a1 1 0 011 1v5h5a1 1 0 110 2h-5v5a1 1 0 11-2 0v-5H4a1 1 0 110-2h5V4a1 1 0 011-1z" clipRule="evenodd" />
+        </svg>
+      );
+      const TrashIcon = () => (
+        <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5" viewBox="0 0 20 20" fill="currentColor">
+          <path fillRule="evenodd" d="M9 2a1 1 0 00-.894.553L7.382 4H4a1 1 0 000 2v10a2 2 0 002 2h8a2 2 0 002-2V6a1 1 0 100-2h-3.382l-.724-1.447A1 1 0 0011 2H9zM7 8a1 1 0 012 0v6a1 1 0 11-2 0V8zm4 0a1 1 0 012 0v6a1 1 0 11-2 0V8z" clipRule="evenodd" />
+        </svg>
+      );
+      const CameraIcon = () => (
+        <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5 mr-1" viewBox="0 0 20 20" fill="currentColor">
+          <path d="M2 6a2 2 0 012-2h1.586l1.103-1.104A2 2 0 018.121 2h3.758a2 2 0 011.414.586L14.414 4H16a2 2 0 012 2v8a2 2 0 01-2 2H4a2 2 0 01-2-2V6zm8 7a3 3 0 100-6 3 3 0 000 6z" />
+        </svg>
+      );
+      const ChevronLeftIcon = () => (
+        <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5 mr-1" viewBox="0 0 20 20" fill="currentColor">
+          <path fillRule="evenodd" d="M12.707 5.293a1 1 0 010 1.414L9.414 10l3.293 3.293a1 1 0 01-1.414 1.414l-4-4a1 1 0 010-1.414l4-4a1 1 0 011.414 0z" clipRule="evenodd" />
+        </svg>
+      );
+      const PrintIcon = () => (
+        <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5 mr-1" viewBox="0 0 20 20" fill="currentColor">
+          <path fillRule="evenodd" d="M5 4v3H4a2 2 0 00-2 2v6a2 2 0 002 2h12a2 2 0 002-2V9a2 2 0 00-2-2h-1V4a2 2 0 00-2-2H7a2 2 0 00-2 2zm8 0H7v3h6V4zm0 8H7v4h6v-4z" clipRule="evenodd" />
+        </svg>
+      );
+
+      const lsKey = 'inventoryAppReceipts';
+      const deptOptions = ['PROPS', 'TECHNICAL', 'WARDROBE'];
+
+      function App() {
+        const [receipts, setReceipts] = useState([]);
+        const [selectedReceipt, setSelectedReceipt] = useState(null);
+        const [view, setView] = useState('list');
+
+        useEffect(() => {
+          try {
+            const saved = localStorage.getItem(lsKey);
+            if (saved) setReceipts(JSON.parse(saved));
+          } catch (e) { console.error('Load failed', e); }
+        }, []);
+
+        useEffect(() => {
+          try { localStorage.setItem(lsKey, JSON.stringify(receipts)); } catch (e) { console.error('Save failed', e); }
+        }, [receipts]);
+
+        const handleNewReceipt = () => {
+          setSelectedReceipt({
+            id: `receipt_${Date.now()}`,
+            date: new Date().toISOString().split('T')[0],
+            department: 'PROPS',
+            vendor: '',
+            receiptPhotos: [],
+            items: [],
+          });
+          setView('detail');
+        };
+
+        const handleSelectReceipt = (r) => { setSelectedReceipt(r); setView('detail'); };
+
+        const handleSaveReceipt = (receiptToSave) => {
+          setReceipts(prev => {
+            const exists = prev.some(r => r.id === receiptToSave.id);
+            return exists ? prev.map(r => r.id === receiptToSave.id ? receiptToSave : r) : [...prev, receiptToSave];
+          });
+          setView('list');
+          setSelectedReceipt(null);
+        };
+
+        const handleDeleteReceipt = (id) => {
+          if (confirm('Anda pasti mahu padam resit ini?')) {
+            setReceipts(prev => prev.filter(r => r.id !== id));
+            setView('list');
+            setSelectedReceipt(null);
+          }
+        };
+
+        return (
+          <div className="container mx-auto p-4 max-w-5xl printable-area">
+            <header className="bg-white rounded-xl shadow-md p-4 mb-6 sticky top-0 z-10 border border-slate-200">
+              <div className="flex flex-wrap items-center justify-between gap-3">
+                <div>
+                  <h1 className="text-2xl md:text-3xl font-bold text-slate-700">Inventory App</h1>
+                  <p className="text-slate-500 text-sm">Uruskan resit, item, dan nombor siri (localStorage).</p>
+                </div>
+                <div className="flex items-center gap-2 no-print">
+                  {view !== 'report' && (
+                    <button onClick={() => setView('report')} className="px-4 py-2 rounded-lg bg-slate-700 hover:bg-slate-800 text-white shadow-sm">Laporan</button>
+                  )}
+                  {view !== 'detail' && (
+                    <button onClick={handleNewReceipt} className="flex items-center px-4 py-2 rounded-lg bg-blue-600 hover:bg-blue-700 text-white shadow-sm"><PlusIcon/> Resit Baru</button>
+                  )}
+                </div>
+              </div>
+            </header>
+            <main>
+              {view === 'list' && (
+                <ReceiptsList receipts={receipts} onNewReceipt={handleNewReceipt} onSelectReceipt={handleSelectReceipt} onShowReport={() => setView('report')} />
+              )}
+              {view === 'detail' && selectedReceipt && (
+                <ReceiptDetail receipt={selectedReceipt} onSave={handleSaveReceipt} onDelete={handleDeleteReceipt} onBack={() => { setView('list'); setSelectedReceipt(null); }} />
+              )}
+              {view === 'report' && (
+                <ReportView receipts={receipts} onBack={() => { setView('list'); setSelectedReceipt(null); }} />
+              )}
+            </main>
+          </div>
+        );
+      }
+
+      function ReportView({ receipts, onBack }) {
+        const today = new Date().toISOString().split('T')[0];
+        const [filters, setFilters] = useState({ department: 'ALL', startDate: today, endDate: today });
+        const [mode, setMode] = useState('detailed');
+        const [summaryRows, setSummaryRows] = useState([]);
+        const [detailedReceipts, setDetailedReceipts] = useState([]);
+        const pdfRef = useRef(null);
+
+        const handleFilterChange = (e) => {
+          const { name, value } = e.target; setFilters(prev => ({ ...prev, [name]: value }));
+        };
+
+        const filterReceipts = () => {
+          let filtered = [...receipts];
+          if (filters.department !== 'ALL') filtered = filtered.filter(r => r.department === filters.department);
+          if (filters.startDate && filters.endDate) {
+            const start = new Date(filters.startDate); const end = new Date(filters.endDate); end.setHours(23,59,59,999);
+            filtered = filtered.filter(r => { const d = new Date(r.date); return d >= start && d <= end; });
+          }
+          const items = filtered.flatMap(receipt => (receipt.items || []).map(item => ({ ...item, receiptDate: receipt.date, receiptVendor: receipt.vendor, receiptDepartment: receipt.department })) );
+          setSummaryRows(items); setDetailedReceipts(filtered);
+        };
+
+        const generateReport = () => filterReceipts();
+        const handlePrint = () => window.print();
+        const handleExportPdf = async () => {
+          if (!pdfRef.current) return; const node = pdfRef.current;
+          const canvas = await html2canvas(node, { scale: 2, useCORS: true, logging: false, backgroundColor: '#ffffff' });
+          const imgData = canvas.toDataURL('image/png');
+          const pdf = new jsPDF('p','mm','a4'); const imgWidth = 210; const pageHeight = 297;
+          const imgHeight = (canvas.height * imgWidth) / canvas.width; let heightLeft = imgHeight; let position = 0;
+          pdf.addImage(imgData, 'PNG', 0, position, imgWidth, imgHeight); heightLeft -= pageHeight;
+          while (heightLeft > 0) { position = heightLeft - imgHeight; pdf.addPage(); pdf.addImage(imgData, 'PNG', 0, position, imgWidth, imgHeight); heightLeft -= pageHeight; }
+          const range = `${new Date(filters.startDate).toLocaleDateString()}_${new Date(filters.endDate).toLocaleDateString()}`;
+          const dept = filters.department === 'ALL' ? 'ALL' : filters.department;
+          pdf.save(`InventoryReport_${dept}_${range}.pdf`);
+        };
+
+        return (
+          <div className="bg-white p-6 rounded-xl shadow-md border border-slate-200">
+            <div className="no-print">
+              <div className="flex items-center justify-between mb-6 gap-3 flex-wrap">
+                <button onClick={onBack} className="flex items-center text-blue-600 hover:underline"><ChevronLeftIcon/> Kembali ke Senarai</button>
+                <h2 className="text-2xl font-semibold">Jana Laporan</h2>
+              </div>
+              <div className="grid grid-cols-1 md:grid-cols-5 gap-4 p-4 rounded-lg bg-slate-50 border border-slate-200 mb-6">
+                <div>
+                  <label htmlFor="department" className="block text-sm font-medium text-slate-600">Department</label>
+                  <select id="department" name="department" value={filters.department} onChange={handleFilterChange} className="mt-1 w-full rounded-md border-slate-300 shadow-sm focus:border-blue-500 focus:ring-blue-500">
+                    <option value="ALL">SEMUA</option>
+                    {['PROPS','TECHNICAL','WARDROBE'].map(d => <option key={d} value={d}>{d}</option>)}
+                  </select>
+                </div>
+                <div>
+                  <label htmlFor="startDate" className="block text-sm font-medium text-slate-600">Dari Tarikh</label>
+                  <input type="date" id="startDate" name="startDate" value={filters.startDate} onChange={handleFilterChange} className="mt-1 w-full rounded-md border-slate-300 shadow-sm focus:border-blue-500 focus:ring-blue-500"/>
+                </div>
+                <div>
+                  <label htmlFor="endDate" className="block text-sm font-medium text-slate-600">Hingga Tarikh</label>
+                  <input type="date" id="endDate" name="endDate" value={filters.endDate} onChange={handleFilterChange} className="mt-1 w-full rounded-md border-slate-300 shadow-sm focus:border-blue-500 focus:ring-blue-500"/>
+                </div>
+                <div>
+                  <label htmlFor="mode" className="block text-sm font-medium text-slate-600">Jenis Laporan</label>
+                  <select id="mode" name="mode" value={mode} onChange={(e)=>setMode(e.target.value)} className="mt-1 w-full rounded-md border-slate-300 shadow-sm focus:border-blue-500 focus:ring-blue-500">
+                    <option value="summary">Ringkas</option>
+                    <option value="detailed">Terperinci</option>
+                  </select>
+                </div>
+                <div className="flex items-end gap-2">
+                  <button onClick={generateReport} className="w-full bg-blue-600 hover:bg-blue-700 text-white font-semibold py-2 px-4 rounded-lg shadow-sm">Jana</button>
+                </div>
+              </div>
+              <div className="flex justify-end gap-2 mb-4">
+                <button onClick={handlePrint} className="no-print bg-emerald-600 hover:bg-emerald-700 text-white font-semibold py-2 px-4 rounded-lg shadow-sm flex items-center"><PrintIcon/> Cetak</button>
+                <button onClick={handleExportPdf} className="no-print bg-fuchsia-600 hover:bg-fuchsia-700 text-white font-semibold py-2 px-4 rounded-lg shadow-sm">Export PDF</button>
+              </div>
+            </div>
+
+            <div ref={pdfRef} id="report-content">
+              <h3 className="text-xl font-bold mb-2">Laporan Inventori</h3>
+              <p className="text-sm text-slate-600 mb-4">
+                <strong>Department:</strong> {filters.department} | <strong>Tempoh:</strong> {new Date(filters.startDate).toLocaleDateString()} - {new Date(filters.endDate).toLocaleDateString()} | <strong>Jenis:</strong> {mode === 'summary' ? 'Ringkas' : 'Terperinci'}
+              </p>
+              {mode === 'summary' ? (
+                summaryRows.length > 0 ? (
+                  <table className="min-w-full bg-white border border-slate-200">
+                    <thead className="bg-slate-100">
+                      <tr>
+                        <th className="py-2 px-4 border-b text-left text-sm font-semibold text-slate-600">Tarikh</th>
+                        <th className="py-2 px-4 border-b text-left text-sm font-semibold text-slate-600">Vendor</th>
+                        <th className="py-2 px-4 border-b text-left text-sm font-semibold text-slate-600">Item</th>
+                        <th className="py-2 px-4 border-b text-right text-sm font-semibold text-slate-600">Kuantiti</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {summaryRows.map((item, i) => (
+                        <tr key={i} className="hover:bg-slate-50">
+                          <td className="py-2 px-4 border-b text-sm text-slate-700">{new Date(item.receiptDate).toLocaleDateString()}</td>
+                          <td className="py-2 px-4 border-b text-sm text-slate-700">{item.receiptVendor}</td>
+                          <td className="py-2 px-4 border-b text-sm text-slate-700">{item.name}</td>
+                          <td className="py-2 px-4 border-b text-sm text-slate-700 text-right">{item.quantity}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                ) : (
+                  <p className="text-center text-slate-500 py-8">Tiada data untuk dilaporkan. Sila klik "Jana".</p>
+                )
+              ) : (
+                detailedReceipts.length > 0 ? (
+                  <div className="space-y-6">
+                    {detailedReceipts.map((r) => (
+                      <div key={r.id} className="border border-slate-200 rounded-lg p-4">
+                        <div className="flex items-start justify-between gap-4">
+                          <div>
+                            <p className="font-semibold text-slate-800">{r.vendor || 'Tiada Nama Vendor'}</p>
+                            <p className="text-sm text-slate-600">{new Date(r.date).toLocaleDateString()} • {r.department}</p>
+                          </div>
+                          {r.receiptPhotos?.[0]?.dataUrl && (
+                            <img src={r.receiptPhotos[0].dataUrl} alt="Resit" className="w-28 h-28 object-cover rounded-md border border-slate-200" />
+                          )}
+                        </div>
+                        <div className="mt-4">
+                          <h4 className="font-semibold text-slate-700 mb-2">Items ({r.items?.length || 0})</h4>
+                          {(r.items || []).map((it, idx) => (
+                            <div key={it.id || idx} className="mb-4 p-3 rounded-md bg-slate-50 border border-slate-200">
+                              <div className="flex items-center justify-between">
+                                <p className="font-medium">{it.name || 'Item Tanpa Nama'}</p>
+                                <p className="text-sm text-slate-600">Qty: {it.quantity}</p>
+                              </div>
+                              {it.photos?.length > 0 && (
+                                <div className="mt-2 grid grid-cols-6 gap-2">
+                                  {it.photos.map((p) => (
+                                    <img key={p.id} src={p.dataUrl} alt="Item" className="w-full aspect-square object-cover rounded" />
+                                  ))}
+                                </div>
+                              )}
+                              {(it.serials || []).length > 0 && (
+                                <div className="mt-3">
+                                  <p className="text-sm font-semibold text-slate-700">Nombor Siri</p>
+                                  <div className="space-y-2 mt-1">
+                                    {it.serials.map((s, sIdx) => (
+                                      <div key={s.id || sIdx} className="border border-slate-200 rounded p-2">
+                                        <div className="text-sm">{s.number || '(tiada nombor)'}</div>
+                                        {s.photos?.length > 0 && (
+                                          <div className="mt-2 grid grid-cols-6 gap-2">
+                                            {s.photos.map((sp) => (
+                                              <img key={sp.id} src={sp.dataUrl} alt="Serial" className="w-full aspect-square object-cover rounded" />
+                                            ))}
+                                          </div>
+                                        )}
+                                      </div>
+                                    ))}
+                                  </div>
+                                </div>
+                              )}
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                ) : (
+                  <p className="text-center text-slate-500 py-8">Tiada data untuk dilaporkan. Sila klik "Jana".</p>
+                )
+              )}
+            </div>
+          </div>
+        );
+      }
+
+      function ReceiptsList({ receipts, onNewReceipt, onSelectReceipt, onShowReport }) {
+        const [search, setSearch] = useState('');
+        const sorted = useMemo(() => { const c = [...receipts]; c.sort((a,b)=> new Date(b.date)-new Date(a.date)); return c; }, [receipts]);
+        const filtered = useMemo(() => {
+          const q = search.trim().toLowerCase(); if (!q) return sorted;
+          return sorted.filter(r => (r.vendor||'').toLowerCase().includes(q) || (r.department||'').toLowerCase().includes(q) || (r.items||[]).some(it => (it.name||'').toLowerCase().includes(q)) );
+        }, [sorted, search]);
+        return (
+          <div className="bg-white p-6 rounded-xl shadow-md border border-slate-200">
+            <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-3 mb-4">
+              <h2 className="text-2xl font-semibold">Resit</h2>
+              <div className="flex items-center gap-2 no-print">
+                <input value={search} onChange={(e)=>setSearch(e.target.value)} placeholder="Cari vendor / item / department..." className="w-full md:w-72 rounded-md border-slate-300 shadow-sm focus:border-blue-500 focus:ring-blue-500 px-3 py-2" />
+                <button onClick={onShowReport} className="px-4 py-2 rounded-lg bg-slate-700 hover:bg-slate-800 text-white shadow-sm">Laporan</button>
+                <button onClick={onNewReceipt} className="flex items-center px-4 py-2 rounded-lg bg-blue-600 hover:bg-blue-700 text-white shadow-sm"><PlusIcon/> Resit Baru</button>
+              </div>
+            </div>
+            <div className="space-y-3">
+              {filtered.length > 0 ? filtered.map(r => (
+                <button key={r.id} onClick={()=>onSelectReceipt(r)} className="w-full text-left p-4 border border-slate-200 rounded-lg hover:bg-slate-50 hover:shadow-sm transition flex items-center justify-between">
+                  <div>
+                    <p className="font-bold">{r.vendor || 'Tiada Nama Vendor'}</p>
+                    <p className="text-sm text-slate-600">{r.department || 'Tiada Department'}</p>
+                    <p className="text-xs text-slate-500">{new Date(r.date).toLocaleDateString()}</p>
+                  </div>
+                  <div className="text-right text-sm text-slate-600">
+                    <p>{(r.items||[]).length} item</p>
+                    <p>{(r.receiptPhotos||[]).length} gambar</p>
+                  </div>
+                </button>
+              )) : (
+                <p className="text-center text-slate-500 py-10">Tiada resit dijumpai. Klik "Resit Baru" untuk mula.</p>
+              )}
+            </div>
+          </div>
+        );
+      }
+
+      function PhotoInput({ section, photos=[], onUpload, onRemove, inputId }) {
+        const idRef = useRef(inputId || `${section}-upload-${Math.random().toString(36).slice(2)}`);
+        const disabled = photos.length >= 10;
+        return (
+          <div>
+            <label htmlFor={idRef.current} className={\`flex items-center justify-center w-full \${disabled ? 'bg-blue-300 cursor-not-allowed' : 'bg-blue-600 hover:bg-blue-700 cursor-pointer'} text-white font-semibold py-2 px-4 rounded-lg shadow-sm\`}>
+              <CameraIcon/> {disabled ? 'Had 10 gambar' : 'Tambah Gambar'}
+            </label>
+            <input id={idRef.current} type="file" accept="image/*" capture="environment" className="hidden" onChange={(e)=>!disabled && e.target.files && onUpload(section, e.target.files[0])} disabled={disabled} />
+            <div className="mt-4 grid grid-cols-3 sm:grid-cols-4 md:grid-cols-5 gap-2">
+              {photos.map((p, idx) => (
+                <div key={p.id} className="relative group">
+                  <img src={p.dataUrl} alt={\`photo \${idx+1}\`} className="w-full h-20 object-cover rounded-lg border border-slate-200" />
+                  <button type="button" onClick={()=>onRemove(section, idx)} className="absolute top-1 right-1 bg-red-600 text-white rounded-full p-1 opacity-0 group-hover:opacity-100 transition"><TrashIcon/></button>
+                </div>
+              ))}
+            </div>
+          </div>
+        );
+      }
+
+      function ItemCard({ item, index, onUpdate, onRemove }) {
+        const handleItemChange = (field, value) => onUpdate(index, { ...item, [field]: value });
+        const handlePhotoUpload = (section, file) => { if (!file) return; const photos = item[section] || []; if (photos.length >= 10) return alert('Anda hanya boleh tambah sehingga 10 gambar.'); const reader = new FileReader(); reader.onload = (e)=>{ onUpdate(index, { ...item, [section]: [...photos, { id: \`photo_\${Date.now()}\`, dataUrl: e.target.result }] }); }; reader.readAsDataURL(file); };
+        const removePhoto = (section, photoIndex) => { const updated = (item[section]||[]).filter((_,i)=>i!==photoIndex); onUpdate(index, { ...item, [section]: updated }); };
+        const addSerial = () => { const serials = item.serials || []; if (serials.length >= 10) return alert('Anda hanya boleh tambah sehingga 10 nombor siri.'); onUpdate(index, { ...item, serials: [...serials, { id: \`serial_\${Date.now()}\`, number: '', photos: [] }] }); };
+        const removeSerial = (sIndex) => onUpdate(index, { ...item, serials: (item.serials||[]).filter((_,i)=>i!==sIndex) });
+        const handleSerialChange = (sIndex, value) => { const serials=[...(item.serials||[])]; serials[sIndex].number=value; onUpdate(index,{...item, serials}); };
+        const handleSerialPhotoUpload = (sIndex, file) => { if(!file) return; const serials=[...(item.serials||[])]; const serial=serials[sIndex]; const photos=serial.photos||[]; if(photos.length>=10) return alert('Anda hanya boleh tambah sehingga 10 gambar untuk nombor siri ini.'); const reader=new FileReader(); reader.onload=(e)=>{ serials[sIndex]={...serial, photos:[...photos,{id:\`photo_serial_\${Date.now()}\`, dataUrl:e.target.result}]}; onUpdate(index,{...item, serials}); }; reader.readAsDataURL(file); };
+        const removeSerialPhoto = (sIndex, photoIndex) => { const serials=[...(item.serials||[])]; serials[sIndex].photos=(serials[sIndex].photos||[]).filter((_,i)=>i!==photoIndex); onUpdate(index,{...item, serials}); };
+
+        return (
+          <div className="border border-slate-300 rounded-lg p-4 space-y-4 bg-slate-50">
+            <div className="flex justify-between items-center">
+              <h4 className="font-bold text-lg text-slate-700">Item #{index + 1}</h4>
+              <button type="button" onClick={()=>onRemove(index)} className="text-red-600 hover:text-red-700 p-2"><TrashIcon/></button>
+            </div>
+            <div className="grid grid-cols-1 sm:grid-cols-5 gap-4">
+              <div className="sm:col-span-3">
+                <label className="block text-sm font-medium text-slate-600">Nama Item</label>
+                <input type="text" value={item.name} onChange={(e)=>handleItemChange('name', e.target.value)} placeholder="Nama Item" className="mt-1 block w-full rounded-md border-slate-300 shadow-sm"/>
+              </div>
+              <div className="sm:col-span-2">
+                <label className="block text-sm font-medium text-slate-600">Kuantiti</label>
+                <input type="number" min={1} value={item.quantity} onChange={(e)=>handleItemChange('quantity', Number(e.target.value)||1)} placeholder="Kuantiti" className="mt-1 block w-full rounded-md border-slate-300 shadow-sm"/>
+              </div>
+            </div>
+            <div>
+              <h5 className="font-semibold text-slate-600 mb-2">Gambar Item ({item.photos?.length || 0}/10)</h5>
+              <PhotoInput section="photos" photos={item.photos||[]} onUpload={handlePhotoUpload} onRemove={removePhoto} inputId={\`item-\${item.id}-photos\`} />
+            </div>
+            <div>
+              <div className="flex justify-between items-center mb-2">
+                <h5 className="font-semibold text-slate-600">Nombor Siri ({item.serials?.length || 0}/10)</h5>
+                <button type="button" onClick={addSerial} disabled={(item.serials?.length||0)>=10} className="flex items-center bg-white border border-slate-300 hover:bg-slate-100 text-slate-700 font-semibold py-1 px-3 rounded-lg text-sm disabled:opacity-50"><PlusIcon/> Tambah</button>
+              </div>
+              <div className="space-y-3">
+                {(item.serials||[]).map((serial, sIndex) => (
+                  <div key={serial.id} className="p-3 bg-white rounded-lg border">
+                    <div className="flex items-center gap-2 mb-2">
+                      <input type="text" value={serial.number} onChange={(e)=>handleSerialChange(sIndex, e.target.value)} placeholder={\`Nombor Siri #\${sIndex+1}\`} className="flex-grow rounded-md border-slate-300 shadow-sm"/>
+                      <button type="button" onClick={()=>removeSerial(sIndex)} className="text-red-600 hover:text-red-700"><TrashIcon/></button>
+                    </div>
+                    <h6 className="text-sm font-semibold text-slate-500 mb-2">Gambar Nombor Siri ({serial.photos?.length || 0}/10)</h6>
+                    <PhotoInput section={sIndex} photos={serial.photos||[]} onUpload={(section, file)=>handleSerialPhotoUpload(section, file)} onRemove={(section, photoIdx)=>removeSerialPhoto(section, photoIdx)} inputId={\`item-\${item.id}-serial-\${sIndex}\`} />
+                  </div>
+                ))}
+              </div>
+            </div>
+          </div>
+        );
+      }
+
+      function ReceiptDetail({ receipt, onSave, onDelete, onBack }) {
+        const [formData, setFormData] = useState(receipt);
+        const handleChange = (e) => { const { name, value } = e.target; setFormData(prev => ({ ...prev, [name]: value })); };
+        const handleAddItem = () => { if ((formData.items||[]).length >= 10) return alert('Anda hanya boleh menambah sehingga 10 item setiap resit.'); setFormData(prev => ({ ...prev, items: [...prev.items, { id: \`item_\${Date.now()}\`, name: '', quantity: 1, photos: [], serials: [] }] })); };
+        const handleUpdateItem = (idx, updated) => { const items=[...formData.items]; items[idx]=updated; setFormData(prev=>({ ...prev, items })); };
+        const handleRemoveItem = (idx) => setFormData(prev => ({ ...prev, items: prev.items.filter((_,i)=>i!==idx) }));
+
+        const SinglePhotoInput = ({ section }) => {
+          const photo = (formData[section]||[])[0];
+          const idRef = useRef(\`\${section}-single-\${receipt.id}\`);
+          const handleSinglePhotoUpload = (file) => { if(!file) return; const reader=new FileReader(); reader.onload=(e)=> setFormData(prev=>({ ...prev, [section]: [{ id: \`photo_\${Date.now()}\`, dataUrl: e.target.result }] })); reader.readAsDataURL(file); };
+          const removeSinglePhoto = () => setFormData(prev=>({ ...prev, [section]: [] }));
+          return (
+            <div>
+              {!photo ? (
+                <label htmlFor={idRef.current} className="flex items-center justify-center w-full bg-blue-600 hover:bg-blue-700 text-white font-semibold py-2 px-4 rounded-lg shadow-sm cursor-pointer"><CameraIcon/> Tambah Gambar (1/1)</label>
+              ) : (
+                <div className="relative group mt-4"><img src={photo.dataUrl} alt="receipt" className="w-full h-48 object-cover rounded-lg border border-slate-200"/><button type="button" onClick={removeSinglePhoto} className="absolute top-2 right-2 bg-red-600 text-white rounded-full p-1"><TrashIcon/></button></div>
+              )}
+              <input id={idRef.current} type="file" accept="image/*" capture="environment" className="hidden" onChange={(e)=> e.target.files && handleSinglePhotoUpload(e.target.files[0])} />
+            </div>
+          );
+        };
+
+        return (
+          <div className="bg-white p-6 rounded-xl shadow-md border border-slate-200">
+            <div className="flex justify-between items-center mb-6">
+              <button onClick={onBack} className="flex items-center text-blue-600 hover:underline"><ChevronLeftIcon/> Kembali ke Senarai</button>
+              <h2 className="text-2xl font-semibold">Sunting Resit</h2>
+            </div>
+            <form onSubmit={(e)=>{ e.preventDefault(); onSave(formData); }}>
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-6">
+                <div>
+                  <label htmlFor="date" className="block text-sm font-medium text-slate-600">Tarikh</label>
+                  <input type="date" id="date" name="date" value={formData.date} onChange={handleChange} className="mt-1 block w-full rounded-md border-slate-300 shadow-sm focus:border-blue-500 focus:ring-blue-500"/>
+                </div>
+                <div>
+                  <label htmlFor="vendor" className="block text-sm font-medium text-slate-600">Vendor</label>
+                  <input type="text" id="vendor" name="vendor" value={formData.vendor} onChange={handleChange} placeholder="cth., Kedai Perkakasan ABC" className="mt-1 block w-full rounded-md border-slate-300 shadow-sm focus:border-blue-500 focus:ring-blue-500"/>
+                </div>
+                <div className="md:col-span-2">
+                  <label htmlFor="department" className="block text-sm font-medium text-slate-600">Department</label>
+                  <select id="department" name="department" value={formData.department} onChange={handleChange} className="mt-1 block w-full rounded-md border-slate-300 shadow-sm focus:border-blue-500 focus:ring-blue-500">
+                    {['PROPS','TECHNICAL','WARDROBE'].map(d => <option value={d} key={d}>{d}</option>)}
+                  </select>
+                </div>
+              </div>
+              <div className="space-y-8">
+                <FormSection title="Gambar Resit"><SinglePhotoInput section="receiptPhotos"/></FormSection>
+                <FormSection title="Items" count={(formData.items||[]).length} onAdd={handleAddItem}>
+                  <div className="space-y-4">
+                    {(formData.items||[]).map((it,i)=> (
+                      <ItemCard key={it.id} item={it} index={i} onUpdate={handleUpdateItem} onRemove={handleRemoveItem} />
+                    ))}
+                  </div>
+                </FormSection>
+              </div>
+              <div className="mt-8 pt-6 border-t border-slate-200 flex justify-between items-center">
+                <button type="button" onClick={()=>onDelete(formData.id)} className="text-red-600 hover:underline">Padam Resit</button>
+                <button type="submit" className="bg-green-600 hover:bg-green-700 text-white font-semibold py-2 px-6 rounded-lg shadow-sm">Simpan Resit</button>
+              </div>
+            </form>
+          </div>
+        );
+      }
+
+      const FormSection = ({ title, count, onAdd, children }) => (
+        <div className="p-4 border border-slate-200 rounded-lg">
+          <div className="flex justify-between items-center mb-4">
+            <h3 className="text-lg font-semibold text-slate-700">{title}</h3>
+            {onAdd && (
+              <button type="button" onClick={onAdd} disabled={(count||0)>=10} className="flex items-center bg-slate-200 hover:bg-slate-300 text-slate-700 font-semibold py-1 px-3 rounded-lg text-sm disabled:opacity-50"><PlusIcon/> Tambah ({count||0}/10)</button>
+            )}
+          </div>
+          <div className="space-y-3">{children}</div>
+        </div>
+      );
+
+      createRoot(document.getElementById('root')).render(<App/>);
+    </script>
+  </body>
+</html>
